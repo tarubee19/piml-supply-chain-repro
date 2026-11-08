@@ -1,0 +1,35 @@
+--- seed 0 ---
+  RF       MAE=6.8 RMSE=9.0 R2=0.996 PCR=100.0% tIoU=0.936
+  LSTM     MAE=74.5 RMSE=93.9 R2=0.619 PCR=100.0% tIoU=0.540
+  GreyBox  MAE=0.7 RMSE=0.9 R2=1.000 PCR=100.0% tIoU=0.993
+  PIML     MAE=61.3 RMSE=124.7 R2=0.327 PCR=100.0% tIoU=0.667
+--- seed 1 ---
+   RF       MAE=6.5 RMSE=9.0 R2=0.996 PCR=100.0% tIoU=0.926
+  LSTM     MAE=68.3 RMSE=85.1 R2=0.639 PCR=100.0% tIoU=0.527
+  GreyBox  MAE=3.2 RMSE=18.7 R2=0.983 PCR=100.0% tIoU=0.971
+  PIML     MAE=19.6 RMSE=24.2 R2=0.971 PCR=100.0% tIoU=0.808
+--- seed 2 ---
+  RF       MAE=5.2 RMSE=6.9 R2=0.998 PCR=100.0% tIoU=0.949
+  LSTM     MAE=88.6 RMSE=103.5 R2=0.618 PCR=100.0% tIoU=0.433
+  GreyBox  MAE=0.7 RMSE=0.9 R2=1.000 PCR=100.0% tIoU=0.994
+  PIML     MAE=33.0 RMSE=43.2 R2=0.933 PCR=100.0% tIoU=0.718
+--- seed 3 ---
+  RF       MAE=7.8 RMSE=12.2 R2=0.994 PCR=100.0% tIoU=0.914
+  LSTM     MAE=80.0 RMSE=95.9 R2=0.631 PCR=100.0% tIoU=0.480
+  GreyBox  MAE=0.7 RMSE=0.9 R2=1.000 PCR=100.0% tIoU=0.993
+  PIML     MAE=36.2 RMSE=46.4 R2=0.914 PCR=100.0% tIoU=0.696
+--- seed 4 ---
+-
+  RF       MAE=7.1 RMSE=9.4 R2=0.997 PCR=100.0% tIoU=0.931
+  LSTM     MAE=92.3 RMSE=106.3 R2=0.592 PCR=100.0% tIoU=0.417
+  GreyBox  MAE=0.7 RMSE=1.1 R2=1.000 PCR=100.0% tIoU=0.993
+  PIML     MAE=76.0 RMSE=101.0 R2=0.632 PCR=100.0% tIoU=0.526
+
+=== Reproduction: window-estimation comparison (5 seeds) ===
+  Model         MAE        RMSE            R2   PCR     mean_tIoU tIoU_50 tIoU_70
+     RF   8.0 ± 1.6  11.6 ± 3.3 0.994 ± 0.004 100.0 0.916 ± 0.021    98.0    97.3
+   LSTM  87.9 ± 7.6 103.8 ± 6.0 0.545 ± 0.069 100.0 0.435 ± 0.067    40.7    17.3
+GreyBox   0.7 ± 0.1   0.9 ± 0.1 1.000 ± 0.000 100.0 0.993 ± 0.001   100.0   100.0
+   PIML 54.7 ± 18.7 78.5 ± 35.8 0.699 ± 0.246 100.0 0.616 ± 0.100    73.3    50.7
+
+Saved to results/table7_8.csv  (678s)
