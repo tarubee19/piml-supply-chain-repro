@@ -1,50 +1,100 @@
-PIML Supply-Chain Disruption: Open Reproduction
-====================================================
+PIML Supply-Chain Disruption: Simple Explanation
+=================================================
 
-A simple, open reproduction and critique of: Matsuno, Watanabe, Lin, Tanimizu (2026). PIML-Driven Supply Chain Disruption Estimation and Capacity-Sharing Optimization. ASME J. Comput. Inf. Sci. Eng. 26(11), 111003.
+What is this project?
+----------------------
 
-The original paper infers a hidden upstream supplier's disruption window (ts, te) from a focal firm's own order/backlog/delivery records, using a physics-informed neural network (PIML) trained with a hybrid loss. It reports PIML beating LSTM/RF/TFT baselines on a private simulator.
+There's a research paper that tries to solve this problem: a company
+can see its own orders and deliveries, but not what's happening at its
+supplier. Can you tell, just from your own numbers, WHEN a supplier had
+a problem and for how long? The paper calls this method "PIML" -- a
+small neural network that's taught some physics rules about how a
+backlog builds up, so its guesses stay realistic.
 
-We could not get the original data or code (available only "on reasonable request"), so we built an open simulator of the same physics (backlog conservation law, sigmoid disruption window, capacity ramp-up ODE -- Eqs 1 to 7 of the paper) and reproduced the comparison ourselves, adding one baseline the paper is missing: a grey-box per-episode curve fit of the same 4 parameters with scipy.optimize.least_squares, no neural network at all.
+The paper's own code and data aren't public (available "on request"
+only), so we couldn't just run their experiment. Instead we rebuilt it
+ourselves, tested it, and then pushed further than the paper did.
 
-Result
-------
+What we actually did, step by step
+-----------------------------------
 
-5 seeds, 200 episodes, 900 steps each. Mean absolute error (MAE) in time units, lower is better; R2 and mean tIoU closer to 1 is better.
+1. We built our own simulator. It generates fake supplier "episodes"
+   that follow the same physics rules as the paper (orders coming in,
+   deliveries going out, backlog piling up when a supplier is in
+   trouble, recovering afterward).
 
-| Model | MAE | R2 | mean tIoU |
-|-------|-----|----|-----------|
-| Grey-box curve fit, no neural net | 0.7 | 1.000 | 0.993 |
-| Random Forest | 8.0 | 0.994 | 0.916 |
-| PIML, our reimplementation, fixed training | 40.5 | 0.881 | 0.692 |
-| PIML, first pass, before the fix | 54.7 | 0.699 | 0.616 |
-| LSTM | 87.9 | 0.545 | 0.435 |
+2. We rebuilt the paper's model (PIML) and tested it against three
+   other methods:
+   - A simple curve-fit (no neural network, just solves the physics
+     equations directly for each case)
+   - Random Forest (a common, simple machine learning model)
+   - LSTM (a different kind of neural network, often used for
+     sequences)
 
-See results/table7_8.csv for the exact numbers and results/run_log_v2.txt for the full per-seed log.
+3. We compared all four on 1,000 simulated test cases. The surprising
+   result: the plain curve-fit and Random Forest both beat the paper's
+   PIML model. We did not just accept this -- we checked it wasn't a
+   mistake (checked the code for cheating/leaks, looked at individual
+   examples by eye, checked the result held across 5 different random
+   setups). It wasn't a bug. It's a known effect in machine learning:
+   when a problem is simple and clean, solving it fresh each time can
+   beat a network trained once to guess it quickly.
 
-Headline finding, opposite of the paper's claim: in our open noiseless-physics simulator, a plain per-episode least-squares fit of the same 4 unknown parameters essentially solves the problem exactly, and clearly beats our reimplementation of the PIML neural network. Random Forest, with no physics at all, also beats PIML. The amortized neural network is harder to train than a direct per-episode physics fit when there are only 4 real unknowns and the forward model is exact. This is the "amortization gap": a network trained once across many episodes trades per-case accuracy for the ability to do one fast forward pass later, while the grey-box fit re-solves a small, well-posed optimization from scratch per episode. This is a known, expected result in machine learning, not a bug.
+4. We then improved the training of PIML (fixed two real issues with
+   how it was being trained) and that helped -- it got about 25%
+   better -- but it still didn't beat the simple curve-fit.
 
-Verification
-------------
+5. Finally, we found a real public dataset (not made up) -- 180,000+
+   real e-commerce orders from a real company, 2015-2017, including
+   order dates, delivery dates, and whether each delivery was late. We
+   built the same kind of "orders in, deliveries out, backlog" picture
+   from this real data and tried our models on it.
 
-Before trusting this result we checked for a bug. The grey-box fitting function only reads an episode's own observed order rate and backlog, never the ground-truth disruption window it is trying to recover, confirmed by inspecting its source. Spot-checking individual test episodes shows grey-box lands within one or two time units of the true window every time, while PIML is off by tens of units on the same episodes. The pattern holds on every one of the 5 random seeds, not just on average.
+   Result: the models didn't find a clean "disruption window" in the
+   real data, and we figured out why -- real shipping speed moves
+   up and down with order volume every week, while the paper's model
+   assumes shipping speed only changes during a rare supplier problem.
+   Also, in this dataset deliveries are late about 55% of the time
+   almost constantly, not because of one specific event. So the
+   paper's model is built for a different kind of problem (one clean,
+   isolated supplier breakdown) than what this everyday retail data
+   shows (constant, spread-out lateness). That's a genuine, useful
+   finding, not a failure.
 
-What this means for next steps
--------------------------------
+The headline result, in one line
+----------------------------------
 
-The grey-box fit is clearly the right method for a single, clean disruption with noiseless physics. PIML's case has to be made where a plain fit cannot go: multiple overlapping disruptions, partial observability, or needing one fast forward pass instead of re-optimizing per supplier every epoch. We already improved PIML's training once (normalizing the loss scale and using 3 random restarts), which cut its error by about 25 percent and its across-seed variance by about 3.5x, but it still does not close the gap. Next steps: add observation noise and overlapping disruptions to see whether grey-box's advantage holds once the physics stops being exact, and test real-world data.
+On our simulated data, simply solving the physics equations directly
+(no neural network) beat the paper's neural network by a wide margin,
+and that finding held up to real scrutiny. On real-world data, neither
+approach found a believable answer, because the real data doesn't
+match the kind of problem the paper's model was built to solve.
 
-Repo layout
------------
+Where to look
+--------------
 
-src/simulator.py is the open simulator. src/models.py has the PIML network, the grey-box fit, and the Random Forest and LSTM baselines. src/run_experiment.py runs the 5-seed comparison and writes results/table7_8.csv.
+- `src/` -- all the code (simulator, models, the script that runs the
+  comparison)
+- `results/` -- the actual numbers from our comparison, plus full logs
+- `real_data/` -- the real-dataset experiment and what we found
 
-Reproduce
----------
+What's left to do
+-------------------
 
-Install torch, scikit-learn, scipy, numpy and pandas, then run src/run_experiment.py. Takes about 20 minutes on a laptop CPU, no GPU needed.
+- Try adding noise and overlapping disruptions to our simulator, to see
+  if the neural network starts winning once the problem gets messier
+  (closer to the paper's claimed strength)
+- Try a real dataset that has one specific, known disruption event
+  (like a named shortage or a shipping-lane shutdown), instead of
+  everyday retail lateness
+- Explore whether an LLM/RAG or multi-agent approach could help --
+  not yet attempted
 
 Honesty notes
 --------------
 
-This is our own reimplementation of the paper's method based on its equations, not the authors' code, so results here are not a critique of their actual implementation. All data is synthetic, from our own simulator, not the paper's private dataset. We have not yet tuned PIML's training as carefully as the paper reports doing.
+This is our own rebuild of the paper's method based on reading its
+equations, not the authors' actual code, so nothing here is a claim
+about bugs in their real implementation. All of the "simulated" data
+is ours, not theirs. We haven't tuned PIML's training as much as the
+paper says they did.
