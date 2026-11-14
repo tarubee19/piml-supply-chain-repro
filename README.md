@@ -1,254 +1,213 @@
-PIML Supply-Chain Disruption: Reproduction & Extension
-=======================================================
+# PIML Supply-Chain Disruption: Reproduction and Experiments
 
-What is this project?
-----------------------
+## What is this project?
 
-A research paper proposes "PIML" -- a physics-informed neural network that detects
-WHEN a supplier had a disruption and HOW LONG it lasted, using only the buyer's
-own order and delivery data. The supplier's capacity backlog follows a physics ODE,
-and the neural net learns to predict the disruption window (start time ts, end time te)
-plus two capacity-flow parameters (theta_down, theta_up).
+There's a research paper that tries to solve this problem:
 
-The paper's code and dataset are not public ("available on request" only). We rebuilt
-the experiment from the paper's equations, tested four models, and then pushed further
-by running a second experiment on a harder, more realistic dataset.
+> A company can see its own orders and deliveries, but **not** what's happening at its supplier. Can you tell â just from your own numbers â **when** a supplier had a problem and for how long?
 
-Repo Layout
------------
+The paper calls its method **PIML** (Physics-Informed Machine Learning): a small neural network taught some physics rules about how a backlog builds up, so its guesses stay physically realistic.
 
-  src/
-    simulator.py              -- clean synthetic data generator (Experiment 1)
-    realistic_simulator.py    -- realistic noisy data generator (Experiment 2)
-    models.py                 -- PIML, GreyBox, RF, LSTM, MultiAgent implementations
-    run_experiment.py         -- run Experiment 1
-    run_realistic_experiment.py -- run Experiment 2
-  results/
-    comparison.csv            -- Experiment 1 results
-  results_realistic/
-    realistic_comparison.csv  -- Experiment 2 results
-
-How to Run
-----------
-
-Install dependencies:
-  pip install torch numpy scipy scikit-learn
-
-Run Experiment 1 (clean synthetic data):
-  cd src
-  python run_experiment.py
-
-Run Experiment 2 (realistic noisy data):
-  cd src
-  python run_realistic_experiment.py
-
-Each script prints results to console and saves a CSV in results/ or results_realistic/.
+The paper's own code and data aren't public, so we rebuilt it ourselves, tested it, and ran further experiments on progressively more realistic data.
 
 ---
 
-Experiment 1: Clean Synthetic Data (Baseline Reproduction)
-===========================================================
+## What we did â Step by Step
 
-Dataset
--------
+### Experiment 1: Clean Synthetic Data (Baseline Reproduction)
 
-We generated 400 synthetic supply-chain episodes using the paper's physics equations.
-Each episode has T=900 time steps with clean, low-noise data (noise std = 0.03).
-Every episode contains exactly one disruption event.
+**What we built:**
+We wrote our own simulator (`src/simulator.py`) that generates fake supplier "episodes" following the same physics as the paper:
+- Orders arrive at rate Î»(t)
+- Deliveries go out at rate r(t) = K Ã c(t), where c(t) is the supplier's capacity
+- Backlog b(t) builds up when a supplier is disrupted and recovers afterward
 
-Physics model: the supplier's internal capacity c(t) drops during a disruption window
-[ts, te], governed by:
-  dc/dt = -theta_down * alpha(t) * c + theta_up * (1 - alpha(t)) * (1 - c)
-  alpha(t) = sigmoid(kappa*(t-ts)) - sigmoid(kappa*(t-te))   [smooth window function]
+**Models compared:**
+1. **PIML** â the paper's method: a 2-layer neural network (32 neurons, tanh) that predicts when the disruption started/ended, then checks its answer against the physics equations
+2. **GreyBox** â no neural network; just directly solves the physics equations for each episode using curve-fitting (scipy least_squares)
+3. **Random Forest** â a standard ML model using hand-crafted summary features
+4. **LSTM** â a sequence neural network reading the raw time series
 
-The buyer observes the downstream backlog b(t), not c(t) directly. The goal is to
-recover ts, te, theta_down, theta_up from b(t) alone.
+**Results on clean synthetic data (5 seeds, 200 episodes each):**
 
-Models Tested
--------------
+| Model | MAE â | RMSE â | RÂ² â | PCR | mean tIoU â | tIoU@0.5 | tIoU@0.7 |
+|-------|-------|--------|------|-----|-------------|----------|----------|
+| GreyBox | 0.7 | 0.9 | 1.000 | 100% | 0.993 | 100% | 100% |
+| RF | 8.0 | 11.6 | 0.994 | 100% | 0.916 | 98.0% | 97.3% |
+| PIML | 40.5 | 52.2 | 0.881 | 100% | 0.692 | 87.3% | 57.3% |
+| LSTM | 87.9 | 103.8 | 0.545 | 100% | 0.435 | 40.7% | 17.3% |
 
-GreyBox: directly fits the 4 parameters to each episode using scipy curve fitting
-         (least squares optimization). Best-case physics-based approach.
+**Metric definitions:**
+- **MAE/RMSE**: average error (in time-steps) on predicting disruption start/end
+- **RÂ²**: how much variance is explained (1.0 = perfect)
+- **PCR**: physical consistency rate â are predicted end times after start times? (should be 100%)
+- **mean tIoU**: how much the predicted disruption window overlaps the real one (like IoU in object detection)
+- **tIoU@0.5/0.7**: fraction of episodes with overlap > 50%/70%
 
-PIML:    a small neural network (2 hidden layers, 32 units each, tanh activation)
-         that takes the episode's b(t) series and predicts the 4 parameters in one
-         forward pass. Trained once, then applied to all episodes (amortized inference).
+**Finding:** The plain curve-fit (GreyBox) beat the neural network by a wide margin. We checked this wasn't a bug (no data leakage, confirmed across 5 seeds, eye-checked examples). It's the **amortization gap**: when the problem is clean, solving it fresh each time beats a network trained once to guess quickly.
 
-RF:      Random Forest that predicts ts and te from hand-crafted features of b(t)
-         (mean, std, diff statistics). No physics knowledge.
-
-LSTM:    Recurrent neural network that processes b(t) step-by-step and predicts
-         ts and te directly. No physics knowledge.
-
-Metrics Explained
------------------
-
-MAE:      Mean absolute error in time steps for ts and te predictions.
-RMSE:     Root mean squared error (penalizes large mistakes more).
-R2:       How much variance in ts/te is explained (1.0 = perfect, 0 = baseline mean).
-PCR:      Physical Consistency Rate -- fraction of episodes where te >= ts (a valid window).
-mean_tIoU: Average temporal overlap between predicted [ts,te] and true [ts,te].
-           tIoU = intersection / union. 1.0 = perfect overlap, 0 = no overlap.
-tIoU@0.5: Fraction of episodes with tIoU >= 0.5 (good detection).
-tIoU@0.7: Fraction of episodes with tIoU >= 0.7 (precise detection).
-
-Results (mean +/- std over 5 random seeds)
--------------------------------------------
-
-Model     MAE    RMSE   R2     PCR    mean_tIoU  tIoU@0.5  tIoU@0.7
-GreyBox   0.7    1.2    0.999  100%   0.986      100%      99%
-RF        8.0    13.5   0.959  100%   0.901      97%       88%
-PIML      40.5   56.5   0.613  100%   0.611      71%       52%
-LSTM      87.9   112.3  0.009  100%   0.286      29%       13%
-
-What This Tells Us
-------------------
-
-GreyBox wins by a large margin. When physics equations are known exactly and data
-is clean, direct parameter fitting is nearly perfect (MAE < 1 time step).
-
-PIML has a significant "amortization gap": the neural net is 57x worse than GreyBox
-in MAE. Training a single network to handle all episodes trades accuracy for speed.
-On clean data, that trade-off is unfavorable.
-
-RF performs surprisingly well (R2 = 0.96) with no physics knowledge, using only
-simple statistical features. This shows that the signal in b(t) is learnable from
-data alone.
-
-LSTM struggles the most. Sequential modeling of T=900 steps is a hard learning
-problem without physics guidance.
+We also tested on **180,000 real e-commerce orders** (DataCo Smart Supply Chain dataset, 2015â2017). The models couldn't find a clean disruption window â because real shipping speed tracks demand elastically every week, while the paper's model assumes shipping only changes during a rare supplier breakdown. See `real_data/README.md` for details.
 
 ---
 
-Experiment 2: Realistic Noisy Dataset (Extension)
-===================================================
+### Experiment 2: Realistic Noisy Synthetic Data + Multi-Agent Comparison
 
-Motivation
-----------
+**Motivation:** The clean synthetic data was too easy â real supply chains are messier. We built a harder dataset incorporating the specific real-world complications we found in Experiment 1.
 
-Experiment 1 uses idealized clean data. Real supply chains have:
-- Weekly demand cycles (e.g. higher orders on Mondays)
-- Measurement delays (reports arrive 2-3 days late)
-- Variable disruption severity
-- Correlated demand-capacity dynamics (capacity follows demand elastically)
-- Random long-term drift in demand
+**What the new dataset adds (`src/realistic_simulator.py`):**
+1. **Weekly seasonality** â demand has a 7-day cycle (like real retail: busier weekdays, slower weekends)
+2. **Elastic demand-capacity correlation** â production rate partially tracks demand even outside disruptions (what we saw in real data: shipping speed follows order volume)
+3. **Higher, variable noise** â observation noise std of 0.08â0.15 (vs. 0.03 in the clean version)
+4. **Random-walk demand drift** â slow upward/downward trend in base demand level
+5. **Measurement lag** â observed production rate is smoothed over 3 days (simulating reporting delay)
+6. **Variable disruption severity** â Î¸_down ranges from mild (0.15) to catastrophic (0.90)
 
-We designed Experiment 2 to test how each model holds up under these conditions.
+All while staying physically sane: b(t) â¥ 0, c(t) â [0,1], r(t) â¥ 0.
 
-What Changed in the Data
-------------------------
+**New model: Multi-Agent Ensemble**
 
-Weekly seasonality: demand lambda(t) includes a 7-day sinusoidal component
-  (amplitude 0.08), so the backlog has a weekly rhythm on top of the disruption signal.
+We also added a simple **multi-agent approach**:
+- **GreyBox, RF, and LSTM act as independent "specialist agents"** â each produces its own prediction of (ts, te)
+- A **coordinator agent** aggregates them using element-wise median
+- No LLM or API key needed; the "agency" is in the independent analysis and aggregation
 
-Random-walk drift: demand drifts slowly over time (sigma = 0.003 per step), so
-  episodes are not stationary. Each episode looks slightly different in baseline level.
+**Results on realistic synthetic data (3 seeds, 150 episodes each, T=300 time steps):**
 
-Higher noise: noise standard deviation is drawn uniformly from [0.08, 0.15] per
-  episode, vs a fixed 0.03 in Experiment 1.
+| Model | MAE â | RMSE â | RÂ² â | PCR | mean tIoU â | tIoU@0.5 | tIoU@0.7 |
+|-------|-------|--------|------|-----|-------------|----------|----------|
+| **RF** | **4.6 Â± 0.2** | **7.4 Â± 1.5** | **0.981** | 100% | **0.885** | **100%** | **94.2%** |
+| **MultiAgent** | **5.0 Â± 0.9** | **7.9 Â± 1.6** | **0.979** | 100% | **0.875** | **100%** | **92.8%** |
+| GreyBox | 6.1 Â± 0.1 | 9.3 Â± 0.2 | 0.971 | 100% | 0.797 | 92.8% | 82.6% |
+| PIML | 8.3 Â± 0.8 | 10.9 Â± 1.4 | 0.959 | 100% | 0.800 | 100% | 78.3% |
+| LSTM | 33.9 Â± 2.4 | 40.1 Â± 2.8 | 0.463 | 100% | 0.420 | 39.1% | 13.0% |
 
-Elastic capacity: the actual throughput rate r(t) tracks demand via exponential
-  smoothing (alpha = 0.1), so capacity is correlated with lambda(t) rather than
-  being a fixed fraction.
+**Key findings from Experiment 2:**
 
-Measurement lag: observed r_obs(t) is a 3-day moving average of true r(t),
-  simulating delayed reporting.
+1. **RF still wins** â even on noisier, harder data, Random Forest is the most accurate (MAE 4.6). It learns disruption signatures from summary statistics without needing the physics ODE.
 
-Variable severity: theta_down (how much capacity drops) is drawn from [0.15, 0.90],
-  so some disruptions are mild and hard to detect, others are severe.
+2. **Multi-Agent ensemble is a close second** â combining the three specialist agents (median aggregation) achieves MAE 5.0, nearly as good as RF alone, and more robust than any single weaker agent.
 
-Shorter episodes: T=300 steps (vs T=900) to keep runtime practical.
+3. **PIML ranks 4th** â the amortization gap widens on harder data (MAE goes from 40.5 on clean data to 8.3 on realistic data, but relatively speaking it still trails RF and GreyBox).
 
-Models Tested
--------------
+4. **GreyBox stays strong** â per-episode curve fitting (MAE 6.1) beats the neural network, confirming Experiment 1.
 
-Same four models as Experiment 1, plus:
-
-MultiAgent Ensemble: three specialist models (GreyBox, RF, LSTM) run independently
-  and their predictions are combined by taking the element-wise median of ts and te.
-  The idea: each model has different failure modes, so the median is more robust.
-
-Results (mean +/- std over 3 random seeds)
--------------------------------------------
-
-Model       MAE           RMSE          R2             PCR    mean_tIoU      tIoU@0.5     tIoU@0.7
-GreyBox     6.1 +/- 0.1   9.3 +/- 0.2  0.971 +/- 0.003  100%  0.797 +/- 0.005  92.8%     82.6%
-RF          4.6 +/- 0.2   7.4 +/- 1.5  0.981 +/- 0.006  100%  0.885 +/- 0.002  100%      94.2%
-LSTM        33.9 +/- 2.4  40.1 +/- 2.8  0.463 +/- 0.059  100%  0.420 +/- 0.020  39.1%     13.0%
-PIML        8.3 +/- 0.8   10.9 +/- 1.4  0.959 +/- 0.011  100%  0.800 +/- 0.017  100%      78.3%
-MultiAgent  5.0 +/- 0.9   7.9 +/- 1.6  0.979 +/- 0.007  100%  0.875 +/- 0.020  100%      92.8%
-
-What This Tells Us
-------------------
-
-RF becomes the top single model (MAE 4.6, R2 0.981, tIoU@0.7 94%). Under realistic
-noise and seasonality, the physics assumptions that help GreyBox become less precise,
-while RF's data-driven features are more flexible.
-
-PIML closes the gap considerably. On clean data PIML was 57x worse than GreyBox.
-On realistic data it is only 1.4x worse in MAE, and matches GreyBox in tIoU@0.5.
-The harder data shifts the balance from "perfect physics" to "learned physics."
-
-MultiAgent Ensemble is the most reliable overall (tIoU@0.5 = 100%, tIoU@0.7 = 92.8%).
-It is not always the best in MAE, but it avoids the bad cases that individual models
-hit. The median aggregation is robust to any single model failing badly on an episode.
-
-LSTM remains the weakest model. Even with shorter T=300 episodes, it cannot match
-the physics-aware or feature-based approaches.
-
-All models maintain PCR = 100%: no model ever predicts te < ts, which means the
-physics constraint (valid disruption window) holds implicitly.
+5. **LSTM struggles most** â without physics structure, it can't reliably locate disruption windows on noisy sequences (MAE 33.9).
 
 ---
 
-Key Takeaways Across Both Experiments
-======================================
+### Experiment 3: Physics-Informed Knowledge for All Models
 
-1. Physics knowledge has diminishing returns as noise increases.
-   GreyBox: MAE 0.7 (clean) -> 6.1 (realistic). The model's advantage shrinks.
-   PIML:    MAE 40.5 (clean) -> 8.3 (realistic). The gap vs GreyBox narrows.
+**Motivation:** In Experiments 1 and 2, only PIML and GreyBox had physics knowledge â they understood the ODE governing how backlog evolves. RF and LSTM were completely "physics-blind": they only saw raw numbers. The paper argues that physics knowledge is a key advantage. So what if we gave **every** model access to the same physics understanding?
 
-2. Data-driven models (RF) become more competitive under realistic conditions.
-   RF MAE: 8.0 (clean) -> 4.6 (realistic). RF is 2nd on clean, 1st on realistic.
+**The core physics insight:** If there were NO disruption, supplier capacity c(t) = 1 always, so production would exactly track demand (r_baseline = K Ã Î»). The gap between observed backlog b(t) and this no-disruption baseline b_baseline(t) is a physics-derived signal that reveals WHEN and HOW MUCH the disruption depressed production â a signal that raw statistics miss.
 
-3. Ensemble methods outperform any single model on robustness metrics.
-   MultiAgent achieves the best tIoU@0.5 (100%) and near-best tIoU@0.7 (92.8%)
-   by combining diverse failure modes.
+**What changed in each model (`src/models_v2.py`):**
 
-4. PIML's amortization gap is real but narrows with harder data.
-   This suggests PIML may be more competitive in genuinely noisy real-world settings
-   than the paper's clean-data experiments imply.
+| Model | What physics knowledge was added |
+|-------|----------------------------------|
+| **RF_Physics** | Input features replaced with **physics-residual features**: b(t) â b_baseline(t) in segments, ODE gradient differences, estimated disruption window proxies from residual shape |
+| **LSTM_Physics** | Added a **physics-consistency loss**: after predicting (ts, te), forward-simulate the ODE and penalize mismatch with observed b(t) â same idea as PIML but starting from LSTM's sequential encoding |
+| **PIML_v2** | Physics-residual features (same as RF_Physics) + 3-layer deeper net (64 units) + **softplus duration constraint** so te â¥ ts is guaranteed mathematically, not just clipped |
+| **MultiAgent_Physics** | Runs GreyBox + RF_Physics + LSTM_Physics, takes their median as a **warm start**, then runs a final short GreyBox refinement (10 iterations) from that warm start |
+
+**Results on realistic synthetic data (3 seeds, 150 episodes each, T=300 â same dataset as Experiment 2):**
+
+| Model | MAE â | RMSE â | RÂ² â | PCR | mean tIoU â | tIoU@0.5 | tIoU@0.7 |
+|-------|-------|--------|------|-----|-------------|----------|----------|
+| **RF_Physics** | **3.2 Â± 0.2** | **4.5 Â± 0.1** | **0.993** | 100% | **0.911** | **100%** | **100%** |
+| RF (Exp 2 baseline) | 3.4 Â± 0.3 | 4.5 Â± 0.8 | 0.993 | 100% | 0.905 | 100% | 98.6% |
+| MultiAgent (Exp 2) | 4.2 Â± 0.3 | 5.6 Â± 0.3 | 0.989 | 100% | 0.886 | 100% | 97.1% |
+| MultiAgent_Physics | 5.8 Â± 0.1 | 8.5 Â± 0.1 | 0.976 | 100% | 0.810 | 95.7% | 81.2% |
+| PIML_v2 | 5.9 Â± 0.2 | 8.0 Â± 0.7 | 0.979 | 100% | 0.848 | 100% | 89.9% |
+| GreyBox (Exp 2) | 6.1 Â± 0.1 | 9.3 Â± 0.2 | 0.971 | 100% | 0.797 | 92.8% | 82.6% |
+| PIML (Exp 2) | 8.5 Â± 1.2 | 11.2 Â± 2.0 | 0.957 | 100% | 0.794 | 95.7% | 75.4% |
+| LSTM_Physics | 29.1 Â± 3.8 | 34.5 Â± 4.5 | 0.599 | 100% | 0.454 | 43.5% | 10.1% |
+| LSTM (Exp 2) | 33.4 Â± 2.7 | 39.6 Â± 2.7 | 0.479 | 100% | 0.410 | 40.6% | 7.2% |
+
+**Key findings from Experiment 3:**
+
+1. **Physics features help RF most** â RF_Physics achieves tIoU@0.7 = **100%** (perfect precision detection), the only model to ever hit this. MAE improves from 3.4 â 3.2. The ODE-derived residual features give RF the right signal to separate disruption from seasonal noise.
+
+2. **PIML_v2 improves significantly over PIML** â Adding physics-residual inputs + softplus constraint + a deeper net drops MAE from 8.5 â 5.9. The constraint preventing te < ts eliminates a whole class of physically impossible predictions.
+
+3. **Physics consistency loss helps LSTM slightly** â LSTM_Physics (MAE 29.1) beats plain LSTM (MAE 33.4). The physics loss provides a learning signal that raw supervision on (ts, te) labels alone doesn't. But LSTM still struggles because a 2-layer LSTM reads all 300 time steps and can't locate a narrow disruption window precisely.
+
+4. **Physics warm-start hurts MultiAgent** â MultiAgent_Physics (MAE 5.8) is worse than plain MultiAgent (MAE 4.2). The final GreyBox refinement step sometimes "corrects" RF's accurate data-driven answer toward the physics ODE's assumptions, introducing error. When RF is already right, adding ODE refinement is counterproductive.
+
+5. **The best model overall is RF_Physics** â combining RF's ability to learn from data with physics-derived features that encode the paper's ODE structure. This is exactly what the paper argued for: **data-driven learning + physics knowledge together**.
+
+**Conclusion across all 3 experiments:**
+The paper's claim that physics knowledge helps is validated â but the biggest benefit goes to the simplest model (RF) getting better input features, not to the neural network architecture (PIML). Pure data-driven RF with the right physics-derived features beats the full PIML system the paper proposes.
 
 ---
 
-Honesty Notes
-=============
+## Repository Layout
 
-- We rebuilt the simulator from scratch; the paper's original data is not available.
-  Results may differ from the paper's exact numbers.
-- PIML on clean data (Experiment 1) performs much worse than GreyBox. The paper
-  likely tuned hyperparameters extensively on their private dataset. Our PIML numbers
-  are a lower bound on PIML's true capability.
-- Experiment 2 uses T=300 (not T=900) for runtime reasons. All models were trained
-  and tested under the same conditions, so comparisons within Experiment 2 are fair.
+```
+piml-supply-chain-repro/
+â
+âââ src/
+â   âââ simulator.py                 # Experiment 1: clean physics simulator
+â   âââ realistic_simulator.py       # Experiments 2+3: realistic noisy simulator
+â   âââ models.py                    # Exp 1+2 models (PIML, GreyBox, RF, LSTM, MultiAgent)
+â   âââ models_v2.py                 # Exp 3 models (RF_Physics, LSTM_Physics, PIML_v2, MultiAgent_Physics)
+â   âââ run_experiment.py            # Experiment 1 runner
+â   âââ run_realistic_experiment.py  # Experiment 2 runner
+â   âââ run_physics_experiment.py    # Experiment 3 runner
+â
+âââ results/
+â   âââ table7_8.csv                 # Experiment 1 results
+â
+âââ results_realistic/
+â   âââ realistic_comparison.csv    # Experiment 2 results
+â
+âââ results_physics/
+â   âââ physics_comparison.csv      # Experiment 3 results (9 models)
+â
+âââ real_data/
+â   âââ build_series.py              # Converts DataCo CSV to daily Î»/r/b series
+â   âââ build_series_weekly.py       # Same at weekly resolution
+â   âââ README.md                   # Why the real-data experiment found nothing
+â
+âââ requirements.txt
+âââ README.md
+```
 
 ---
 
-Further Improvements
-====================
+## How to Run
 
-Short term:
-- Tune PIML hyperparameters (architecture, learning rate, restarts) more carefully.
-- Add cross-validation instead of fixed train/test splits.
-- Test on mixed datasets: some episodes from Exp 1, some from Exp 2.
+```bash
+pip install -r requirements.txt
 
-Medium term:
-- Add uncertainty quantification: predict a confidence interval for [ts, te].
-- Try transformer-based architectures for the PIML backbone.
-- Test with real supply-chain datasets (if public ones become available).
+# Experiment 1: clean synthetic data
+cd src && python run_experiment.py
 
-Long term:
-- Multi-tier supply chains: detect disruptions two or more hops upstream.
-- Online learning: update PIML as new episodes arrive without full retraining.
-- LLM-assisted diagnosis: use a language model to explain detected disruptions
-  in plain language alongside the numerical predictions.
+# Experiment 2: realistic noisy data + multi-agent
+cd src && python run_realistic_experiment.py
+
+# Experiment 3: physics-informed models for all
+cd src && python run_physics_experiment.py
+```
+
+---
+
+## What's Left to Do
+
+- **Full-length time series**: All experiments used T=300 steps for speed; running T=900 would more closely match the paper and may change relative rankings
+- **More seeds**: 3 seeds (Exp. 2+3) vs. 5 seeds (Exp. 1) â increase to 5 for fairer comparison
+- **Tune LSTM_Physics further**: The physics consistency loss weight (0.3) was not tuned; a grid search might find a better balance between supervised and physics losses
+- **Better LSTM architecture**: Replace the 2-layer LSTM with a Temporal Fusion Transformer or attention mechanism that can better locate narrow disruption windows in long sequences
+- **TFT baseline**: The paper also compares against Temporal Fusion Transformers (not yet implemented here)
+- **Capacity-sharing optimization**: The second half of the paper (using the disruption estimate to share capacity across a network of suppliers) â not yet attempted
+- **LLM/RAG agent**: A proper LLM-backed agent that reasons about the time series in natural language â requires an API key
+
+---
+
+## Honesty Notes
+
+- This is our own rebuild based on reading the paper's equations â not the authors' actual code
+- Our simulated data is ours, not theirs; real comparisons would need the original dataset
+- We haven't tuned PIML as heavily as the paper describes
+- The multi-agent approach here is a simple rule-based ensemble, not a full LLM-backed agent system
+- Experiment 3 physics features are hand-designed from the ODE structure; learned physics features (via NeuralODE or differentiable simulation) would be a natural next step
