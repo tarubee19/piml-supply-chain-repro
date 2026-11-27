@@ -166,6 +166,25 @@ This residual is near zero outside disruptions and dips negative when capacity i
 
 ---
 
+## Next Stage: PharmaNet-Disrupt Dataset (for the paper)
+
+Experiments 1-3 used one supplier at a time. Real pharmaceutical shortages are network problems, so the
+next stage of the project uses a new, much larger dataset: **[PharmaNet-Disrupt](pharma_dataset/)**.
+
+- 3,400 multi-tier networks (API suppliers -> manufacturers -> hospital buyer), 2 years of daily data each
+- 25,099 drug products, 42,803 supplier-product links, 32,614 ground-truth events, 35,219 labelled shortages
+- 8 event types: quality failure, regulatory action, API shortage, natural disaster, logistics disruption,
+  discontinuation, plus demand surges and planned maintenance as confounders
+- Noisy buyer-side observations plus 66,339 external text alerts (including false alarms) for LLM / news agents
+- Calibrated to FDA / GAO / ASHP / USP statistics (e.g. 62% of shortages caused by manufacturing problems vs 63% in FDA data)
+- IID train / val / test plus three out-of-distribution test sets (severe, larger networks, noisier data)
+- Six benchmark tasks: detection, root-cause localisation, diagnosis, severity, early warning, closed-loop mitigation
+
+Full details: [pharma_dataset/README.md](pharma_dataset/README.md). Regenerate the dataset with
+`cd pharma_dataset && python generate.py --out data --scale full` (about 4 minutes, 2 GB).
+
+---
+
 ## Overall Conclusion Across All 3 Experiments
 
 The paper's claim that physics knowledge is a key advantage is validated. But the biggest benefit goes to Random Forest getting better input features, not to the PIML neural architecture.
